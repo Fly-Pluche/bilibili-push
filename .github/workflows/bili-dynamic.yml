@@ -1,0 +1,58 @@
+name: B站动态推送
+
+on:
+  schedule:
+    # 每 10 分钟跑一次。GitHub Actions 的 cron 最快约 5 分钟一次，且高峰期可能延迟几分钟，属正常现象。
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # 支持在 Actions 页面手动触发
+
+# 避免两次运行同时改 state.json
+concurrency:
+  group: bili-push
+  cancel-in-progress: false
+
+# 允许把更新后的 state.json 提交回仓库
+permissions:
+  contents: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip   # 缓存依赖，加快运行、省 Actions 分钟数
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 检查动态并推送
+        env:
+          BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
+          # 监控名单在 subscriptions.txt 里维护（改文件即可增删，提交后下次运行生效）。
+          # BILI_UIDS 可选：仅用于临时补充 UID，平时留空即可。
+          BILI_UIDS: ${{ vars.BILI_UIDS }}
+          # 推送渠道：按需在仓库 Secrets 里配置任意一个或多个（都免费可选）
+          BARK_URL: ${{ secrets.BARK_URL }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bili_push.py
+
+      - name: 保存状态
+        if: always()   # 即便上一步报错也把已更新的状态提交回去
+        run: |
+          if [[ -n "$(git status --porcelain state.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "chore: update dynamic state [skip ci]"
+            git push
+          else
+            echo "state.json 无变化，跳过提交"
+          fi
