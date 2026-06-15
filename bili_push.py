@@ -539,7 +539,8 @@ def main() -> int:
     if not active_channels():
         missing.append("推送渠道(至少配一个: BARK_URL / WECOM_WEBHOOK / NTFY_URL / SERVERCHAN_SENDKEY / TELEGRAM_*)")
     if missing:
-        log(f"缺少必填配置: {', '.join(missing)}")
+        log(f"❌ 缺少必填配置: {', '.join(missing)}")
+        log("→ 请在仓库 Settings → Secrets and variables → Actions 里配置对应的 Secret（名称需完全一致），再重新运行")
         return 2
     log("已启用推送渠道: " + "、".join(n for n, _ in active_channels()))
     log(f"共监控 {len(subs)} 个 UP 主: " + "、".join(name or uid for uid, name in subs))
