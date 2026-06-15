@@ -366,7 +366,10 @@ def save_state(state: dict):
 
 
 # ---------------------------------------------------------------------------
-# 订阅列表（subscriptions.txt，可手动增删）
+# 订阅列表
+#   优先级：环境变量 BILI_SUBS（多行，适合 fork 后在仓库 Variables 里配置）
+#          → 否则用 subscriptions.txt 文件。
+#   另外 BILI_UIDS（逗号分隔的纯 UID）总会合并进来，便于临时补充。
 # ---------------------------------------------------------------------------
 
 _BILI_RE = re.compile(r"(?:https?://)?space\.bilibili\.com/(\d+)", re.I)
@@ -378,28 +381,44 @@ def _name_before(line: str, start: int, end: int = None) -> str:
     return s.strip().strip(",=|:：- ").strip()
 
 
-def load_subscriptions() -> list[tuple[str, str]]:
-    """读取订阅列表 → [(uid, name), ...]。
+def _parse_sub_line(raw: str):
+    """解析一行 “名字 链接/UID” → (uid, name)；注释/空行/无法识别返回 None。"""
+    line = raw.strip()
+    if not line or line.startswith("#"):
+        return None
+    m = _BILI_RE.search(line)
+    if m:
+        return (m.group(1), _name_before(line, m.start()))
+    m2 = re.search(r"\d{5,}", line)  # 纯数字 → 当作 UID
+    if m2:
+        return (m2.group(0), _name_before(line, m2.start(), m2.end()))
+    return None
 
-    每行 “名字 链接/UID”（B站主页/动态链接，或直接写 UID）；# 开头为注释、空行忽略。
-    另外若设置了 BILI_UIDS 环境变量，其中的 UID 也会合并进来（便于临时添加/测试）。
-    按 UID 去重，保留首次出现（含名字）。
+
+def load_subscriptions() -> list[tuple[str, str]]:
+    """读取订阅列表 → [(uid, name), ...]，按 UID 去重（保留首次出现的名字）。
+
+    来源优先级：
+      1) 环境变量 BILI_SUBS（多行，每行 “名字 链接/UID”）—— fork 后在仓库 Variables 里设一次即可，
+         设了它就忽略 subscriptions.txt 文件；
+      2) subscriptions.txt 文件（未设 BILI_SUBS 时使用）；
+      3) 环境变量 BILI_UIDS（逗号分隔纯 UID）—— 始终合并，便于临时补充。
     """
     subs: list[tuple[str, str]] = []
-    if SUBS_FILE.exists():
-        for raw in SUBS_FILE.read_text("utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            m = _BILI_RE.search(line)
-            if m:
-                subs.append((m.group(1), _name_before(line, m.start())))
-            else:
-                m2 = re.search(r"\d{5,}", line)  # 纯数字 → 当作 UID
-                if m2:
-                    subs.append((m2.group(0), _name_before(line, m2.start(), m2.end())))
-                else:
-                    log(f"订阅文件忽略无法识别的行: {raw!r}")
+
+    def _add_from(text: str, src: str):
+        for raw in text.splitlines():
+            parsed = _parse_sub_line(raw)
+            if parsed:
+                subs.append(parsed)
+            elif raw.strip() and not raw.strip().startswith("#"):
+                log(f"[{src}] 忽略无法识别的行: {raw!r}")
+
+    env_subs = os.environ.get("BILI_SUBS", "").strip()
+    if env_subs:
+        _add_from(env_subs, "BILI_SUBS")             # 设了 Variable 就以它为准
+    elif SUBS_FILE.exists():
+        _add_from(SUBS_FILE.read_text("utf-8"), "subscriptions.txt")
 
     for u in os.environ.get("BILI_UIDS", "").replace("，", ",").split(","):
         u = u.strip()

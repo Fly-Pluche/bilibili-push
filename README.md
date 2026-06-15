@@ -68,9 +68,27 @@ Fork 本仓库，或把代码 clone 下来推到你自己的仓库。
 - `BILI_COOKIE` —— 第 1 步复制的整行 Cookie
 - 你所选渠道对应的 Secret（例如 `BARK_URL`）
 
-### 第 3 步：填监控名单
+### 第 3 步：填监控名单（两种方式，二选一）
 
-编辑仓库里的 [`subscriptions.txt`](subscriptions.txt)，把示例换成你要监控的 UP 主（格式见文件内说明），提交。
+**方式 A（推荐，fork 后不用动代码）：用仓库 Variable**
+
+**Settings → Secrets and variables → Actions → 选 “Variables” 标签 → New repository variable**，
+新建 **`BILI_SUBS`**，值为多行的“名字 链接”（在网页输入框里直接换行）：
+
+```text
+老番茄     https://space.bilibili.com/546195/dynamic
+影视飓风   https://space.bilibili.com/946974/dynamic
+```
+
+以后增删 UP 主，回来改这个变量即可，无需改文件、无需提交。
+
+> 为什么用 Variable 而不是 “Run workflow” 的输入框？因为 `workflow_dispatch` 输入**只对手动运行生效，
+> 定时任务（cron）时拿不到**；而 Variable 对每次定时运行都有效。
+
+**方式 B：编辑文件**
+
+直接改仓库里的 [`subscriptions.txt`](subscriptions.txt)，把示例换成你要监控的 UP 主后提交。
+（注意：一旦设了 `BILI_SUBS` 变量，本文件会被忽略，以变量为准。）
 
 ### 第 4 步：开启 Actions 并授予写权限
 
@@ -103,16 +121,19 @@ python bili_push.py
 
 ## ➕ 增删监控的 UP 主
 
-编辑 [`subscriptions.txt`](subscriptions.txt)，每行一个，格式 `名字 链接`：
+两种方式，**设了变量就以变量为准、文件被忽略**：
+
+- **仓库 Variable `BILI_SUBS`**（推荐）：多行 `名字 链接`，在 GitHub 网页上改，立即对下次运行生效，不用动代码。
+- **`subscriptions.txt` 文件**：每行一个，格式同上。
 
 ```text
 老番茄     https://space.bilibili.com/546195/dynamic
 影视飓风   https://space.bilibili.com/946974/dynamic
-# 直接写 UID 也行，名字可省略：
+# 直接写 UID 也行，名字可省略；纯 UID 也能用环境变量 BILI_UIDS 临时补充
 2267573
 ```
 
-`#` 开头是注释，空行忽略；名字只是备注，脚本以链接里的 UID 为准。GitHub 上改完提交，**下次运行自动生效**；新加入的 UP 主只建立基线、**不补推历史**。
+`#` 开头是注释，空行忽略；名字只是备注，脚本以链接里的 UID 为准。新加入的 UP 主只建立基线、**不补推历史**。
 
 ## ❓ 常见问题
 

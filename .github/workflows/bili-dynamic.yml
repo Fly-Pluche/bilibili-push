@@ -32,8 +32,11 @@ jobs:
       - name: 检查动态并推送
         env:
           BILI_COOKIE: ${{ secrets.BILI_COOKIE }}
-          # 监控名单在 subscriptions.txt 里维护（改文件即可增删，提交后下次运行生效）。
-          # BILI_UIDS 可选：仅用于临时补充 UID，平时留空即可。
+          # 监控名单（二选一）：
+          #  · 推荐：在 Settings → Variables 里建一个 BILI_SUBS（多行，每行“名字 链接”），fork 后设一次即可，不用改代码；
+          #  · 或者：直接编辑仓库里的 subscriptions.txt。设了 BILI_SUBS 就以它为准。
+          BILI_SUBS: ${{ vars.BILI_SUBS }}
+          # BILI_UIDS 可选：临时补充几个纯 UID（逗号分隔），平时留空即可。
           BILI_UIDS: ${{ vars.BILI_UIDS }}
           # 推送渠道：按需在仓库 Secrets 里配置任意一个或多个（都免费可选）
           BARK_URL: ${{ secrets.BARK_URL }}
