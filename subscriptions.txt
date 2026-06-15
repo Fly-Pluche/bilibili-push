@@ -8,8 +8,12 @@
 # ----------------------------------------------------------------
 # ↓↓↓ 下面是示例，请换成你要监控的 UP 主 ↓↓↓
 
-老番茄        https://space.bilibili.com/546195/dynamic
-影视飓风      https://space.bilibili.com/946974/dynamic
-
-# 也可以只写 UID（名字会自动取接口里的真名）：
-# 2267573
+无敌姜神        https://space.bilibili.com/3706959876327428/dynamic
+文心游龙        https://space.bilibili.com/3546942999103780/dynamic
+股市里的猩猩    https://space.bilibili.com/3546610447419885/dynamic
+D空自然         https://space.bilibili.com/698549035/dynamic
+沐夏风清        https://space.bilibili.com/3546653753608992/dynamic
+疯狂猩猩四      https://space.bilibili.com/3706942109256376/dynamic
+礼貌的大帅      https://space.bilibili.com/3632305289562193/dynamic
+来去由心        https://space.bilibili.com/11430504/dynamic
+擒龙先生        https://space.bilibili.com/3546929266952873/dynamic
