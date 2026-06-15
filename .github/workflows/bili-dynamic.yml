@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: write
 
+# 让 checkout/setup-python 直接用 Node.js 24 运行，消除 Node 20 弃用警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   push:
     runs-on: ubuntu-latest
@@ -50,12 +54,25 @@ jobs:
       - name: 保存状态
         if: always()   # 即便上一步报错也把已更新的状态提交回去
         run: |
-          if [[ -n "$(git status --porcelain state.json)" ]]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add state.json
-            git commit -m "chore: update dynamic state [skip ci]"
-            git push
-          else
+          if [[ -z "$(git status --porcelain state.json)" ]]; then
             echo "state.json 无变化，跳过提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "chore: update dynamic state [skip ci]"
+          # 用 HEAD:main 推送（防 detached HEAD）；失败就 rebase 最新状态后重试一次
+          if git push origin HEAD:main; then
+            echo "✅ state.json 已提交"
+          else
+            echo "首次推送失败，尝试拉取最新后重试…"
+            git pull --rebase --autostash origin main || true
+            if git push origin HEAD:main; then
+              echo "✅ 重试后已提交"
+            else
+              echo "::error::state.json 推送失败，最常见原因是仓库没开写权限。"
+              echo "::error::请到 Settings → Actions → General → Workflow permissions，选 'Read and write permissions' 保存后重跑。"
+              exit 1
+            fi
           fi
