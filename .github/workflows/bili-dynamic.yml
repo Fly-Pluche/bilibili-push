@@ -1,10 +1,15 @@
+# ⚠️ 注意：GitHub Actions 跑在机房 IP 上，抓取 B站 动态接口大概率被风控返回 HTTP 412，
+#    即使 Cookie 有效也拉不到数据。强烈建议改用「自建部署」（住宅 IP / 自己的服务器），
+#    详见 README 的「自建部署」与「⚠️ 别用 GitHub Actions 跑 B站」两节。
+#    本文件仅作保留。
 name: B站动态推送
 
 on:
-  schedule:
-    # 每 10 分钟跑一次。GitHub Actions 的 cron 最快约 5 分钟一次，且高峰期可能延迟几分钟，属正常现象。
-    - cron: "*/10 * * * *"
-  workflow_dispatch: {}   # 支持在 Actions 页面手动触发
+  # 默认只手动触发。机房 IP 抓 B站 会被 412 风控，所以不再定时自动跑（避免反复失败/告警刷屏）。
+  # 若你的运行环境出口 IP 未被 B站风控，可取消下面 schedule 的注释自行启用。
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "*/10 * * * *"
 
 # 避免两次运行同时改 state.json
 concurrency:
