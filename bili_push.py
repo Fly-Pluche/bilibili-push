@@ -45,6 +45,7 @@ UA = (
 STATE_FILE = Path(os.environ.get("STATE_FILE", "state.json"))
 SUBS_FILE = Path(os.environ.get("SUBS_FILE", "subscriptions.txt"))
 MAX_PUSH_PER_RUN = int(os.environ.get("MAX_PUSH_PER_RUN", "10"))
+SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN", "3"))  # 每个 UP 主之间的间隔秒数（降风控）
 SEEN_CAP = 120  # 每个 UP 主最多记住多少条已见 ID
 
 # 人类可读的动态类型
@@ -166,6 +167,35 @@ class BiliClient:
             )
         return data.get("data", {}).get("items", []) or []
 
+    def fetch_all_dynamics(self, since_ts: int = 0, max_pages: int = 3) -> list[dict]:
+        """拉取「全部关注」动态（feed/all，单请求即覆盖所有关注的 UP，无需 WBI）。
+
+        自适应翻页：当本页最旧一条仍晚于 since_ts（可能还有未见的新动态）就继续翻，
+        否则停下。稳态下（高频轮询）通常只取 1 页。
+        """
+        items, offset, page = [], "", 1
+        while page <= max_pages:
+            r = self.session.get(
+                "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all",
+                params={"type": "all", "timezone_offset": "-480", "page": page, "offset": offset},
+                timeout=20,
+            )
+            if r.status_code == 412:
+                raise RuntimeError("HTTP 412 被风控拦截：Cookie 可能无效/过期，或请求过于频繁。")
+            data = r.json()
+            if data.get("code") != 0:
+                raise RuntimeError(f"feed/all 返回错误 code={data.get('code')} msg={data.get('message')}")
+            d = data.get("data", {}) or {}
+            page_items = d.get("items", []) or []
+            items.extend(page_items)
+            offset = d.get("offset", "") or ""
+            oldest = min((int((it.get("modules", {}).get("module_author", {}) or {}).get("pub_ts", 0) or 0)
+                          for it in page_items), default=0)
+            if not d.get("has_more") or not offset or oldest <= since_ts:
+                break
+            page += 1
+        return items
+
 
 # ---------------------------------------------------------------------------
 # 动态内容解析
@@ -236,6 +266,7 @@ def extract(item: dict) -> dict:
         "type": dyn_type,
         "label": label,
         "author": author.get("name", ""),
+        "mid": str(author.get("mid", "") or ""),
         "title": (text.splitlines()[0][:40] if text else label),
         "text": text,
         "url": f"https://t.bilibili.com/{item.get('id_str', '')}",
@@ -509,6 +540,59 @@ def process_uid(client: BiliClient, uid: str, state: dict, display_name: str = "
     return pushed
 
 
+def process_feed_all(client: BiliClient, subs: list, state: dict) -> int:
+    """feed/all 模式：一次请求拿到所有关注 UP 的最新动态，过滤出名单内的并推送。
+
+    适合监控较多 UP 主时低延迟、低请求量（每轮通常 1 个请求）。
+    前提：监控账号需「关注」名单里的这些 UP。状态用单条 _feed_all 记录（全局水位线 + 已读）。
+    """
+    monitored = {uid: name for uid, name in subs}  # uid -> 备注名
+    st = state.get("_feed_all")
+    last_ts = st.get("last_ts", 0) if st else 0
+
+    items = client.fetch_all_dynamics(since_ts=last_ts, max_pages=int(os.environ.get("FEED_ALL_MAX_PAGES", "3")))
+    # 只保留名单内 UP 的动态，并解析
+    mine = []
+    for it in items:
+        p = extract(it)
+        if p["mid"] in monitored and p["id"]:
+            p["name"] = monitored[p["mid"]] or p["author"]
+            mine.append(p)
+
+    if st is None:
+        # 首次：建立基线（水位线取“现在”与当前可见最新动态的较大者），不推历史
+        base = max([int(time.time())] + [p["ts"] for p in mine])
+        state["_feed_all"] = {"last_ts": base, "seen_ids": [p["id"] for p in mine][:SEEN_CAP]}
+        log(f"feed/all 首次建立基线（覆盖 {len(monitored)} 个关注、可见 {len(mine)} 条），不推送")
+        return 0
+
+    prev_seen = st.get("seen_ids", [])
+    seen = set(prev_seen)
+    new_items = sorted(
+        (p for p in mine if p["id"] not in seen and p["ts"] > last_ts),
+        key=lambda p: p["ts"],
+    )
+    if len(new_items) > MAX_PUSH_PER_RUN:
+        log(f"feed/all 新动态 {len(new_items)} 条超上限，仅推最新 {MAX_PUSH_PER_RUN} 条")
+        new_items = new_items[-MAX_PUSH_PER_RUN:]
+
+    pushed, new_last_ts, pushed_ids = 0, last_ts, []
+    for p in new_items:
+        title = f"📢 {p['name']} 发布了{p['label']}"
+        body = f"{p['name']} · {p['label']} · {fmt_time(p['ts'])}\n\n{p['text'] or '(无文字内容)'}"
+        if not notify(title, body, p["url"]):
+            log(f"feed/all 推送失败，停止本轮，下次重试: {p['id']}")
+            break
+        pushed += 1
+        pushed_ids.append(p["id"])
+        new_last_ts = max(new_last_ts, p["ts"])
+        log(f"feed/all 已推送: {p['name']} {p['label']} {p['id']}")
+
+    merged_seen = pushed_ids + [i for i in prev_seen if i not in set(pushed_ids)]
+    state["_feed_all"] = {"last_ts": new_last_ts, "seen_ids": merged_seen[:SEEN_CAP]}
+    return pushed
+
+
 def _load_dotenv():
     """本地运行时若存在 .env 就加载（GitHub Actions 上用真正的环境变量，不会有 .env）。"""
     env = Path(".env")
@@ -545,52 +629,68 @@ def main() -> int:
     log("已启用推送渠道: " + "、".join(n for n, _ in active_channels()))
     log(f"共监控 {len(subs)} 个 UP 主: " + "、".join(name or uid for uid, name in subs))
 
+    feed_mode = os.environ.get("BILI_FEED_MODE", "space").strip().lower()
+    log("抓取模式: " + ("feed/all 合并单请求（需账号已关注这些 UP）" if feed_mode == "all" else "逐个 UP 空间动态"))
+
     first_ever = not STATE_FILE.exists()
     state = load_state()
     client = BiliClient(cookie)
 
     total = 0
     errors = []
-    for i, (uid, name) in enumerate(subs):
+    if feed_mode == "all":
         try:
-            total += process_uid(client, uid, state, name)
+            total = process_feed_all(client, subs, state)
         except Exception as e:  # noqa: BLE001
-            log(f"[{uid}] 处理失败: {e}")
-            errors.append(f"{name or uid}: {e}")
-        save_state(state)  # 每个 UP 主处理完都落盘，避免中途失败丢状态
-        if i < len(subs) - 1:
-            time.sleep(3)  # 轻微间隔，降低风控概率
+            log(f"feed/all 处理失败: {e}")
+            errors.append(str(e))
+        save_state(state)
+        baselined, all_failed = ("_feed_all" in state), bool(errors)
+    else:
+        for i, (uid, name) in enumerate(subs):
+            try:
+                total += process_uid(client, uid, state, name)
+            except Exception as e:  # noqa: BLE001
+                log(f"[{uid}] 处理失败: {e}")
+                errors.append(f"{name or uid}: {e}")
+            save_state(state)  # 每个 UP 主处理完都落盘，避免中途失败丢状态
+            if i < len(subs) - 1:
+                time.sleep(3)  # 轻微间隔，降低风控概率
+        baselined = any(u in state for u in uids)
+        all_failed = bool(subs) and len(errors) == len(subs)
 
-    if first_ever and any(u in state for u in uids):
-        # 首次部署且至少有一个 UP 主拉取成功，发一条确认消息，方便确认推送链路正常
-        names = "、".join(state[u].get("author", u) for u in uids if u in state)
+    if first_ever and baselined:
+        # 首次部署，发一条确认消息，方便确认推送链路正常
+        if feed_mode == "all":
+            names = "、".join(name or uid for uid, name in subs)
+        else:
+            names = "、".join(state[u].get("author", u) for u in uids if u in state)
         notify(
             "✅ B站动态监控已启动",
-            f"已开始监控 {len([u for u in uids if u in state])} 个 UP 主：{names}\n\n"
+            f"已开始监控 {len(subs)} 个 UP 主：{names}\n\n"
             f"后续有新动态会自动推送到这里。\n\n（首次运行仅建立基线，不推送历史动态）",
         )
         log("已发送启动确认消息")
 
-    log(f"本次完成，共推送 {total} 条" + (f"，{len(errors)} 个 UP 主出错" if errors else ""))
+    log(f"本次完成，共推送 {total} 条" + (f"，{len(errors)} 处出错" if errors else ""))
 
-    # 所有 UP 主都失败（多半是 Cookie 过期/被风控）→ 限频报警，避免静默失效
-    if subs and len(errors) == len(subs):
+    # 全部拉取失败（多半是 Cookie 过期/被风控）→ 限频报警，避免静默失效
+    if all_failed:
         meta = state.get("_meta", {})
         now = int(time.time())
         if now - meta.get("last_alert_ts", 0) > ALERT_THROTTLE_SEC:
             notify(
                 "⚠️ B站动态监控异常",
-                "所有 UP 主拉取都失败了，可能是 Cookie 过期或触发风控。\n\n"
-                "请更新 GitHub Secrets 里的 BILI_COOKIE。\n\n"
+                "拉取失败，可能是 Cookie 过期或触发风控。\n\n请检查并更新 BILI_COOKIE。\n\n"
                 f"错误样例：{errors[0]}",
             )
             meta["last_alert_ts"] = now
             state["_meta"] = meta
             save_state(state)
             log("已发送异常报警")
-        return 1  # 全失败时让 Actions 标红，便于察觉
+        return 1  # 全失败时返回非零，便于察觉
 
-    return 0  # 偶发的部分失败不影响整体，保持绿色
+    return 0  # 偶发的部分失败不影响整体
 
 
 if __name__ == "__main__":
