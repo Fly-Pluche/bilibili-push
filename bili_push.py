@@ -44,6 +44,7 @@ UA = (
 
 STATE_FILE = Path(os.environ.get("STATE_FILE", "state.json"))
 SUBS_FILE = Path(os.environ.get("SUBS_FILE", "subscriptions.txt"))
+BLOCK_FILE = Path(os.environ.get("BLOCK_FILE", "blocklist.txt"))
 MAX_PUSH_PER_RUN = int(os.environ.get("MAX_PUSH_PER_RUN", "10"))
 SLEEP_BETWEEN = float(os.environ.get("SLEEP_BETWEEN", "3"))  # 每个 UP 主之间的间隔秒数（降风控）
 SEEN_CAP = 120  # 每个 UP 主最多记住多少条已见 ID
@@ -465,6 +466,39 @@ def load_subscriptions() -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# 宣传/广告屏蔽：命中关键词的动态跳过不推（静默标记为已读）
+#   关键词放在 blocklist.txt（每行一个，# 注释）；没有该文件时用下面的内置默认词。
+# ---------------------------------------------------------------------------
+
+_DEFAULT_BLOCK = [
+    "粉丝交流", "交流群", "交流圈", "进群", "加群", "入群", "名额", "报名预约", "预约报名",
+    "扫码", "二维码", "长按识别", "识别二维码", "加微信", "微信号", "vx", "v信", "私信我", "私我",
+    "免费领取", "提前领", "提前分享", "提前公布", "提前动态", "一起前行", "关注公众号", "公众号",
+    "加助理", "我的助理",
+]
+_BLOCK_KWS = None
+
+
+def load_blocklist() -> list[str]:
+    if BLOCK_FILE.exists():
+        return [ln.strip().lower() for ln in BLOCK_FILE.read_text("utf-8").splitlines()
+                if ln.strip() and not ln.strip().startswith("#")]
+    return [k.lower() for k in _DEFAULT_BLOCK]
+
+
+def is_promo(text: str) -> str:
+    """命中宣传关键词则返回命中的词，否则返回空串。"""
+    global _BLOCK_KWS
+    if _BLOCK_KWS is None:
+        _BLOCK_KWS = load_blocklist()
+    t = (text or "").lower()
+    for kw in _BLOCK_KWS:
+        if kw in t:
+            return kw
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 
@@ -516,6 +550,13 @@ def process_uid(client: BiliClient, uid: str, state: dict, display_name: str = "
     new_last_ts = last_ts
     pushed_ids = []
     for p in new_items:
+        hit = is_promo(p["text"])
+        if hit:
+            # 命中宣传关键词：跳过不推，但标记为已处理（推进水位线），不再重复评估
+            log(f"[{uid}] 已屏蔽疑似宣传(命中“{hit}”): {p['id']} {p['title']}")
+            pushed_ids.append(p["id"])
+            new_last_ts = max(new_last_ts, p["ts"])
+            continue
         title = f"📢 {p['author']} 发布了{p['label']}"
         body = (
             f"{p['author']} · {p['label']} · {fmt_time(p['ts'])}\n\n"
@@ -578,6 +619,12 @@ def process_feed_all(client: BiliClient, subs: list, state: dict) -> int:
 
     pushed, new_last_ts, pushed_ids = 0, last_ts, []
     for p in new_items:
+        hit = is_promo(p["text"])
+        if hit:
+            log(f"feed/all 已屏蔽疑似宣传(命中“{hit}”): {p['name']} {p['id']}")
+            pushed_ids.append(p["id"])
+            new_last_ts = max(new_last_ts, p["ts"])
+            continue
         title = f"📢 {p['name']} 发布了{p['label']}"
         body = f"{p['name']} · {p['label']} · {fmt_time(p['ts'])}\n\n{p['text'] or '(无文字内容)'}"
         if not notify(title, body, p["url"]):
