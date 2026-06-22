@@ -178,7 +178,11 @@ class BiliClient:
         while page <= max_pages:
             r = self.session.get(
                 "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all",
-                params={"type": "all", "timezone_offset": "-480", "page": page, "offset": offset},
+                params={
+                    "type": "all", "timezone_offset": "-480", "page": page, "offset": offset,
+                    # 必须带 features，否则图文动态返回 MAJOR_TYPE_DRAW 且无正文（解析为空）
+                    "features": "itemOpusStyle,opusBigCover,onlyfansVote,decorationCard,forwardListHidden,ugcDelete",
+                },
                 timeout=20,
             )
             if r.status_code == 412:
