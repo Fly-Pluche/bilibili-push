@@ -237,6 +237,19 @@ def _major_text(major: dict) -> tuple[str, str]:
     return "", ""
 
 
+def _dynamic_url(item: dict, major: dict) -> str:
+    """生成可在手机/微信里正常打开的链接。
+
+    优先用 B站自带的 canonical jump_url（图文→/opus/、视频→/video/ 等）；没有则兜底到移动端动态页。
+    修复：图文(opus)用 t.bilibili.com/{id} 在手机端会被重定向到 /dynamic/ 而 404。
+    """
+    for v in (major or {}).values():
+        if isinstance(v, dict) and v.get("jump_url"):
+            ju = v["jump_url"]
+            return ("https:" + ju) if ju.startswith("//") else ju
+    return f"https://m.bilibili.com/dynamic/{item.get('id_str', '')}"
+
+
 def extract(item: dict) -> dict:
     """把一条动态归一化成 {id, ts, type, label, author, title, text, url, is_top}。"""
     mods = item.get("modules", {}) or {}
@@ -252,7 +265,8 @@ def extract(item: dict) -> dict:
     desc = md.get("desc")
     if desc and desc.get("text"):
         text_parts.append(desc["text"])
-    m_title, m_body = _major_text(md.get("major") or {})
+    major = md.get("major") or {}
+    m_title, m_body = _major_text(major)
     if m_title:
         text_parts.append(m_title)
     if m_body:
@@ -274,7 +288,7 @@ def extract(item: dict) -> dict:
         "mid": str(author.get("mid", "") or ""),
         "title": (text.splitlines()[0][:40] if text else label),
         "text": text,
-        "url": f"https://t.bilibili.com/{item.get('id_str', '')}",
+        "url": _dynamic_url(item, major),
         "is_top": "置顶" in tag,
     }
 
