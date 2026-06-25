@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# 个人每日动态摘要，不进公开仓库
+digests/
