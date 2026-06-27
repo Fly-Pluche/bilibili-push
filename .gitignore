@@ -9,3 +9,6 @@ venv/
 
 # 个人每日动态摘要，不进公开仓库
 digests/
+scorecard/data/
+scorecard/__pycache__/
+BLOGGER_SCORECARD.md
